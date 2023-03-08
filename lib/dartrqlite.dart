@@ -3,6 +3,7 @@
 /// More dartdocs go here.
 library dartrqlite;
 
-export 'src/dartrqlite_base.dart';
+import 'src/connection/conn_impl.dart';
 
-// TODO: Export any libraries intended for clients of this package.
+part 'src/dartrqlite.dart';
+part 'src/connection/conn.dart';
