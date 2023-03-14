@@ -1,25 +1,29 @@
 import 'package:dartrqlite/dartrqlite.dart';
+import 'package:dartrqlite/src/cluster/cluster.dart';
 import 'package:flutter_snowflake/flutter_snowflake.dart';
 import 'package:format/format.dart';
 import 'package:logger/logger.dart';
 import 'package:requests/requests.dart';
 
-class ConnectionImpl extends Connection {
+class ConnectionImpl implements Connection {
+  /// Connect to the cluster
+  RqliteCluster cluster = RqliteCluster();
   // Some properties of the connection
   String user = "";
   String pass = "";
   bool wantHTTPS = false;
+  late bool hasBeenClosed;
 
-  // Output connection logs, which are displayed on the command line by default
+  /// Output connection logs, which are displayed on the command line by default
   late Logger logger;
 
-  // generated in ConnectionImpl
+  /// generated in ConnectionImpl
   late final int id;
 
-  // Initialize http client for connection
+  /// Initialize http client for connection
   Requests client = Requests();
 
-  // Some properties from url.parse()
+  /// Some properties from `url.parse()`
   ConsistencyLevel consistencyLevel = ConsistencyLevel.consistencyLevelWeak;
   bool disableClusterDiscovery = false;
   int timeout = 10;
@@ -40,8 +44,39 @@ class ConnectionImpl extends Connection {
     logger = newLogger;
   }
 
-  // TODO:send a api to rqlite
-  dynamic rqliteApiCall() {}
+  /// TODO:leader() tells the current leader of the cluster
+  Peer leader() {
+    return "";
+  }
+
+  /// Peers tells the current peers of the cluster
+  @override
+  List<Peer> peers() {
+    if (hasBeenClosed) {
+      throw "connection is closed";
+    }
+    List<String> plist = [];
+    if (disableClusterDiscovery) {
+      for (var element in cluster.peerList) {
+        plist.add(element);
+      }
+      return plist;
+    }
+    logger.d(format("{}: Peers(), calling updateClusterInfo()", id));
+    _updateClusterInfo();
+    cluster.leader ?? plist.add(cluster.leader!);
+    for (var element in cluster.otherPeers) {
+      plist.add(element);
+    }
+    return plist;
+  }
+
+  /// Close will mark the connection as closed.
+  @override
+  void close() {
+    hasBeenClosed = true;
+    logger.d("conn closing");
+  }
 
   void _initconnection(String connUrl) {
     if (connUrl.length < 7) {
@@ -77,7 +112,6 @@ class ConnectionImpl extends Connection {
     /**
      * parse query params
      */
-
     Map<String, String> query = u.queryParameters;
     if (query.containsKey("level")) {
       if (consistencyLevels.containsKey(query["level"])) {
@@ -108,7 +142,35 @@ class ConnectionImpl extends Connection {
   }
 
   // TODO: Returns an api address for rqlite
-  String _parseUrl(ApiOperation apiOp) {
+  String _assembleUrl(ApiOperation apiOp, Peer p) {
     return "";
+  }
+
+  void _updateClusterInfo() {
+    logger.d('$id _updateClusterInfo() called');
+    cluster.conn = this;
+  }
+
+  dynamic _rqliteApiCall(ApiOperation apiOp, String method,
+      [dynamic requestBody]) {
+    var peers = cluster.getPeerList();
+    if (peers.length < 1) {
+      throw "don't have any cluster info";
+    }
+    logger.d('$id : I have a peer list $peers peers long');
+
+    // Keep list of failed requests to each peer, return in case all peers fail to answer
+    List<String> failLogs = [];
+    for (var peer in peers) {
+      var url = _assembleUrl(apiOp, peer);
+    }
+  }
+
+  String _rqliteApiGet(ApiOperation apiOp) {
+    logger.d('$id rqliteApiGet() called');
+    if (apiOp != ApiOperation.apiStatus && apiOp != ApiOperation.apiNodes) {
+      throw "rqliteApiGet() called for invalid api operation";
+    }
+    return _rqliteApiCall(apiOp, "GET");
   }
 }
