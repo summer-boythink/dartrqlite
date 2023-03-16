@@ -5,6 +5,8 @@ import 'package:format/format.dart';
 import 'package:logger/logger.dart';
 import 'package:requests/requests.dart';
 
+const errorCloseMsg = "connection is closed";
+
 class ConnectionImpl implements Connection {
   /// Connect to the cluster
   RqliteCluster cluster = RqliteCluster();
@@ -13,6 +15,8 @@ class ConnectionImpl implements Connection {
   String pass = "";
   bool wantHTTPS = false;
   late bool hasBeenClosed;
+  bool wantTransactions = true;
+  late bool wantsQueueing;
 
   /// Output connection logs, which are displayed on the command line by default
   late Logger logger;
@@ -44,6 +48,15 @@ class ConnectionImpl implements Connection {
     logger = newLogger;
   }
 
+  /// set state for `wantsTransactions`
+  @override
+  void setExecutionWithTransaction(bool state) {
+    if (hasBeenClosed) {
+      throw errorCloseMsg;
+    }
+    wantTransactions = state;
+  }
+
   /// TODO:leader() tells the current leader of the cluster
   Peer leader() {
     return "";
@@ -53,7 +66,7 @@ class ConnectionImpl implements Connection {
   @override
   List<Peer> peers() {
     if (hasBeenClosed) {
-      throw "connection is closed";
+      throw errorCloseMsg;
     }
     List<String> plist = [];
     if (disableClusterDiscovery) {
@@ -143,7 +156,49 @@ class ConnectionImpl implements Connection {
 
   // TODO: Returns an api address for rqlite
   String _assembleUrl(ApiOperation apiOp, Peer p) {
-    return "";
+    var res = "";
+    if (wantHTTPS) {
+      res += "https";
+    } else {
+      res += "http";
+    }
+    res += "://";
+    if (user.isNotEmpty && pass.isNotEmpty) {
+      res += '$user:$pass@';
+    }
+    res += p;
+
+    switch (apiOp) {
+      case ApiOperation.apiStatus:
+        res += '/status';
+        break;
+      case ApiOperation.apiNodes:
+        res += '/nodes';
+        break;
+      case ApiOperation.apiQuery:
+        res += '/db/query';
+        break;
+      case ApiOperation.apiWrite:
+        res += '/db/execute';
+        break;
+    }
+
+    if (apiOp == ApiOperation.apiQuery || apiOp == ApiOperation.apiWrite) {
+      res += '?timings&level=';
+      consistencyLevels.map((key, value) {
+        if (value == consistencyLevel) {
+          res += key.toString();
+        }
+        return MapEntry(key, value);
+      });
+      if (wantTransactions) {
+        res += '&transactions';
+      }
+      if (apiOp == ApiOperation.apiWrite && wantsQueueing) {
+        res += '&queue';
+      }
+    }
+    return res;
   }
 
   void _updateClusterInfo() {
@@ -154,7 +209,7 @@ class ConnectionImpl implements Connection {
   dynamic _rqliteApiCall(ApiOperation apiOp, String method,
       [dynamic requestBody]) {
     var peers = cluster.getPeerList();
-    if (peers.length < 1) {
+    if (peers.isEmpty) {
       throw "don't have any cluster info";
     }
     logger.d('$id : I have a peer list $peers peers long');

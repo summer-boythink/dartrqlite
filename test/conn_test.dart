@@ -38,5 +38,10 @@ void main() {
           conn.disableClusterDiscovery == true &&
           conn.consistencyLevel == ConsistencyLevel.consistencyLevelWeak);
     });
+
+    test("test _assembleUrl", () {
+      //TODO
+      // var conn = ConnectionImpl();
+    });
   });
 }
