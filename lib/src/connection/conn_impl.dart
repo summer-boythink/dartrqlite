@@ -4,7 +4,7 @@ import 'package:dartrqlite/src/query/queryer.dart';
 import 'package:dartrqlite/src/write/writer.dart';
 import 'package:flutter_snowflake/flutter_snowflake.dart';
 import 'package:format/format.dart';
-import 'package:http/src/response.dart';
+import 'package:http/http.dart';
 import 'package:logger/logger.dart';
 import 'package:requests/requests.dart';
 
