@@ -1,7 +1,10 @@
 import 'package:dartrqlite/dartrqlite.dart';
 import 'package:dartrqlite/src/cluster/cluster.dart';
+import 'package:dartrqlite/src/query/queryer.dart';
+import 'package:dartrqlite/src/write/writer.dart';
 import 'package:flutter_snowflake/flutter_snowflake.dart';
 import 'package:format/format.dart';
+import 'package:http/src/response.dart';
 import 'package:logger/logger.dart';
 import 'package:requests/requests.dart';
 
@@ -14,14 +17,18 @@ class ConnectionImpl implements Connection {
   String user = "";
   String pass = "";
   bool wantHTTPS = false;
+  @override
   late bool hasBeenClosed;
   bool wantTransactions = true;
-  late bool wantsQueueing;
+  @override
+  late bool wantsQueueing = false;
 
   /// Output connection logs, which are displayed on the command line by default
+  @override
   late Logger logger;
 
   /// generated in ConnectionImpl
+  @override
   late final int id;
 
   /// Initialize http client for connection
@@ -32,11 +39,20 @@ class ConnectionImpl implements Connection {
   bool disableClusterDiscovery = false;
   int timeout = 10;
 
+  /// Queryer is used to perform SELECT operations in the database.
+  late Queryer queryer;
+
+  /// Write is used to perform DDL/DML in the database synchronously without parameters.
+  late Writer writer;
+
   ConnectionImpl({String? connUrl, Logger? initLogger}) {
     logger = initLogger ?? Logger(level: Level.info);
     id = -(Snowflake(2, 3).getId());
     logger.d(format('your id is {}', id.toInt()));
     connUrl = connUrl ?? "http://localhost:4001";
+    queryer = Queryer(this);
+    writer = Writer(this);
+    hasBeenClosed = false;
     _initconnection(connUrl);
   }
 
@@ -59,6 +75,15 @@ class ConnectionImpl implements Connection {
 
   /// TODO:leader() tells the current leader of the cluster
   Peer leader() {
+    if (hasBeenClosed) {
+      throw errorCloseMsg;
+    }
+    if (disableClusterDiscovery) {
+      return cluster.leader!;
+    }
+    logger.i('$id :Leader(), calling updateClusterInfo()');
+    _updateClusterInfo();
+    // TODO: cluster
     return "";
   }
 
@@ -120,8 +145,13 @@ class ConnectionImpl implements Connection {
       pass = userInfo[1];
     }
 
-    // TODO:set cluster leader by u.host
-
+    // cluster.leader = connUrl;
+    if (u.authority.isEmpty) {
+      cluster.leader = "localhost:4001";
+    } else {
+      cluster.leader = u.authority;
+    }
+    cluster.peerList = [cluster.leader!];
     /**
      * parse query params
      */
@@ -154,7 +184,6 @@ class ConnectionImpl implements Connection {
     }
   }
 
-  // TODO: Returns an api address for rqlite
   String _assembleUrl(ApiOperation apiOp, Peer p) {
     var res = "";
     if (wantHTTPS) {
@@ -203,11 +232,12 @@ class ConnectionImpl implements Connection {
 
   void _updateClusterInfo() {
     logger.d('$id _updateClusterInfo() called');
+    //TODO:rqliteApiGet
     cluster.conn = this;
   }
 
-  dynamic _rqliteApiCall(ApiOperation apiOp, String method,
-      [dynamic requestBody]) {
+  Future<dynamic> _rqliteApiCall(ApiOperation apiOp, String method,
+      [dynamic requestBody]) async {
     var peers = cluster.getPeerList();
     if (peers.isEmpty) {
       throw "don't have any cluster info";
@@ -218,14 +248,47 @@ class ConnectionImpl implements Connection {
     List<String> failLogs = [];
     for (var peer in peers) {
       var url = _assembleUrl(apiOp, peer);
+
+      // prepare request
+      method = method.toUpperCase();
+      late Response req;
+      switch (method) {
+        case "GET":
+          req = await Requests.get(url,
+              body: requestBody, bodyEncoding: RequestBodyEncoding.JSON);
+          break;
+        case "POST":
+          req = await Requests.post(url,
+              body: requestBody, bodyEncoding: RequestBodyEncoding.JSON);
+          break;
+        default:
+          logger.e('current no support $method');
+      }
+      try {
+        req.raiseForStatus();
+      } catch (e) {
+        failLogs.add(e.toString());
+        rethrow;
+        // return null;
+      }
+      String responseBody = req.content();
+      return responseBody;
     }
   }
 
-  String _rqliteApiGet(ApiOperation apiOp) {
+  Future<String> rqliteApiGet(ApiOperation apiOp) async {
     logger.d('$id rqliteApiGet() called');
     if (apiOp != ApiOperation.apiStatus && apiOp != ApiOperation.apiNodes) {
       throw "rqliteApiGet() called for invalid api operation";
     }
-    return _rqliteApiCall(apiOp, "GET");
+    return await _rqliteApiCall(apiOp, "GET");
+  }
+
+  Future<String> rqliteApiPost(ApiOperation apiOp, dynamic body) async {
+    logger.d('$id rqliteApiPost() called');
+    if (apiOp != ApiOperation.apiQuery && apiOp != ApiOperation.apiWrite) {
+      throw "rqliteApiPost() called for invalid api operation";
+    }
+    return await _rqliteApiCall(apiOp, "POST", body);
   }
 }
